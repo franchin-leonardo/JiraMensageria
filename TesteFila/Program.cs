@@ -5,38 +5,41 @@ using System.Configuration;
 using System.Messaging;
 using JiraMensageria.Controller;
 using System.IO;
+using JiraMensageria.Helpers;
+using System.Net.NetworkInformation;
 
 namespace TesteFila
 {
     class Program
     {
+        public static void Ping(string url)
+        {
+            Uri uri = new Uri(url);
+            Ping ping = new Ping();
+            ping.Send(uri.Host);           
+        }
+
         static void Main(string[] args)
         {
             string result = "";
             string jira = "";
             string evento = "";
+            bool r = false;
+            string uriTkt = ConfigurationManager.AppSettings["ticket"].ToString();
+            string uriStf = ConfigurationManager.AppSettings["stefanini"].ToString();
 
             StefaniniController stf = new StefaniniController();
             TicketController tkt = new TicketController();
 
-            Console.WriteLine("1");
+            MessageQueue msmq = new MessageQueue(ConfigurationManager.AppSettings["caminhoFila"].ToString());
+            msmq.MessageReadPropertyFilter.Priority = true;
+            msmq.Formatter = new XmlMessageFormatter(new Type[] { typeof(string) });
 
-            try
+            while (msmq.CanRead)
             {
-                Console.WriteLine("2");
-                MessageQueue msmq = new MessageQueue(ConfigurationManager.AppSettings["caminhoFila"].ToString());
-                msmq.MessageReadPropertyFilter.Priority = true;
-                msmq.Formatter = new XmlMessageFormatter(new Type[] { typeof(string) });
-
-                //int count = msmq.GetAllMessages().Length;
-
-                Console.WriteLine("3");
-
-                while (msmq.CanRead)
+                try
                 {
-
-                    Console.WriteLine("4");
-                    Message item = msmq.Receive();
+                    Message item = msmq.Peek();
                     result = item.Body.ToString();
 
                     string[] route = item.Label.Split('/');
@@ -52,55 +55,63 @@ namespace TesteFila
                     //TICKET
                     if (jira == "ticket")
                     {
-                        if (evento == "commentcreated")
+                        switch (evento)
                         {
-                            tkt.CommentCreated(jObj);
+                            case "commentcreated"   : r = tkt.CommentCreated(jObj); break;
+                            case "newissue"         : r = tkt.NewIssue(jObj); break;
+                            case "issueupdated"     : r = tkt.IssueUpdated(jObj); break;
+                            case "issuecreated"     : r = tkt.IssueCreate(jObj, "projetctKey", "ticket"); break;
+                            default: break;
                         }
-                        else if (evento == "newissue")
+
+                        try
                         {
-                            tkt.NewIssue(jObj);
+                            Ping(uriTkt);
                         }
-                        else if (evento == "issueupdated")
+                        catch (Exception ex)
                         {
-                            tkt.IssueUpdated(jObj);
-                        }
-                        else if (evento == "issuecreated")
-                        {
-                            tkt.IssueCreate(jObj);
+                            Logger.Now.LogEvent(evento, jira, String.Format("NÃO FOI POSSIVEL CONECTAR AO SERVIDOR JIRA  - {0}", ex.Message));
                         }
                     }
                     //STEFANINI
                     else if (jira == "stefanini")
                     {
-                        Console.WriteLine("5");
-                        if (evento == "worklogcreated")
+                        switch (evento)
                         {
-                            stf.WorklogCreated(jObj);
+                            case "worklogcreated"   : r = stf.WorklogCreated(jObj); break;
+                            case "issueupdated"     : r = stf.IssueUpdated(jObj); break;
+                            case "updatestatus"     : r = stf.UpdateStatus(jObj); break;
+                            default: break;                       
                         }
-                        else if (evento == "issueupdated")
+
+                        if (r)
                         {
-                            stf.IssueUpdated(jObj);
+                            msmq.Receive();
                         }
-                        else if (evento == "updatestatus")
+                        else
                         {
-                            stf.UpdateStatus(jObj);
+                            try
+                            {
+                                Ping(uriStf);
+                            }
+                            catch (Exception ex)
+                            {
+                                Logger.Now.LogEvent(evento, jira, String.Format("NÃO FOI POSSIVEL CONECTAR AO SERVIDOR JIRA  - {0}",ex.Message));
+                            }
+                            
                         }
-                    }
+                    }                 
+
                 }
-
-                Console.WriteLine("6");
-            }
-            catch (Exception ex)
-            {
-
-                Console.WriteLine("7");
-                LogController.LogMensageria(ex.Message, evento, jira);
+                catch (Exception ex)
+                {
+                    Logger.Now.LogEvent(evento, jira, ex.Message);
+                }
             }
 
-            Console.WriteLine("8");
 
-            Console.ReadKey();
-        }     
+
+        }
 
     }
 }

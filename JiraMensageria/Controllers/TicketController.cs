@@ -1,4 +1,6 @@
-﻿using Newtonsoft.Json;
+﻿using JiraMensageria.Helpers;
+using JiraMensageria.Models;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using RestSharp;
 using RestSharp.Authenticators;
@@ -8,209 +10,224 @@ using System.IO;
 using System.Net;
 using System.Text;
 using System.Web;
-using JiraMensageria.Models;
+
 
 
 namespace JiraMensageria.Controller
 {
-    public class TicketController 
+    public class TicketController
     {
         #region Váriaveis Declaradas
-        private readonly RestClient stf;
-        private readonly RestClient tkt;
+        private readonly JiraClient client = new JiraClient();
         #endregion
 
-        #region Construtor da Classe
-        public TicketController()
+        #region Endpoints para eventos de alterações de comentários
+        public bool CommentCreated(JObject obj)
         {
-            stf = new RestClient(new Uri("https://hammerbr.atlassian.net"))
-            {
-                Authenticator = new HttpBasicAuthenticator("e_integracaoJira", "@7px&hBc")
-            };
-
-            tkt = new RestClient(new Uri("http://jirahomol.lanet.accorservices.net"))
-            {
-                Authenticator = new HttpBasicAuthenticator("appjirastefanini", "J!r@edenred")
-            };
-        }
-        #endregion
-
-        public string CommentCreated(JObject obj)
-        {
-            string log = "comment_created";
+            Logger.Now.LogEvent("CommentCreated", "TICKET", "Entrou no método");
+            bool _r = false;
             try
             {
-                string issueKey;
-                if (bool.Parse(obj["issue"]["fields"]["issuetype"]["subtask"].ToString()))
+                string user = obj["user"]["name"].ToString();
+                if (user != "appjirastefanini")
                 {
-                    issueKey = obj["issue"]["fields"]["parent"]["key"].ToString();
-                }
-                else
-                {
-                    issueKey = obj["issue"]["key"].ToString();
-                }
-                IRestResponse r = SearchIssue(issueKey);
-
-                if (r.IsSuccessful)
-                {
-                    JObject stfIssue = JObject.Parse(r.Content.ToString());
-
-                    if (int.Parse(stfIssue["total"].ToString()) > 0)
+                    string issueKey;
+                    if (bool.Parse(obj["issue"]["fields"]["issuetype"]["subtask"].ToString()))
                     {
-                        stf.Execute(
-                            new RestRequest($@"/rest/api/2/issue/{stfIssue["issues"][0]["id"].ToString()}/comment", Method.POST)
-                            {
-                                RequestFormat = DataFormat.Json
-                            }.AddBody(new
-                            {
-                                body = obj["comment"]["body"].ToString(),
-                                visibility = new { }
-                            }));
+                        issueKey = obj["issue"]["fields"]["parent"]["key"].ToString();
                     }
+                    else
+                    {
+                        issueKey = obj["issue"]["key"].ToString();
+                    }
+                    IRestResponse r = client.Stefanini.BuscarPorCustomField(issueKey, "10707");
+                    
+                    if (r.IsSuccessful)
+                    {
+                        Logger.Now.LogEvent("CommentCreated", "TICKET", "Finalizou", $"SUCESSO");
+                        JObject stfIssue = JObject.Parse(r.Content.ToString());
+
+                        if (int.Parse(stfIssue["total"].ToString()) > 0)
+                        {
+                            IRestResponse rr = client.Stefanini.CreateComment(stfIssue["issues"][0]["id"].ToString(), obj["comment"]["body"].ToString());
+                            Logger.Now.LogEvent("CommentCreated", "TICKET", "Finalizou", rr.IsSuccessful ? "SUCESSO" : $"FALHA: {rr.Content}", obj.ToString());
+                            _r = rr.IsSuccessful;
+                        }
+
+                    }
+                    Logger.Now.LogEvent("CommentCreated", "TICKET", "Finalizou", $"FALHA: {r.Content}");
                 }
-                else
-                {
-                    Log($"{log}-SearchError", r.Content, true);
-                }
-                return r.Content;
             }
-            catch (Exception ex)
+            catch (Exception e)
             {
-                return "errou";
+                Logger.Now.LogEvent("CommentCreated", "TICKET", "Exceção gerada", e.Message);
             }
+
+            return _r;
         }
-        
-        public void NewIssue(JObject obj)
+        #endregion
+
+        #region Endpoints para os eventos de criações de Issues
+
+        public bool NewIssue(JObject obj)
         {
+            Logger.Now.LogEvent("NewIssue", "TICKET", "Entrou no método");
+            bool _r = false;
             try
             {
-                if (obj["user"]["name"].Value<string>() != "appjirastefanini")
+                if (obj["user"]["name"].ToString() != "appjirastefanini")
                 {
-                    bool isSubTask = Convert.ToBoolean(obj["issue"]["fields"]["issuetype"]["subtask"].ToString());
+                    JObject fields = JsonConvert.DeserializeObject<JObject>(obj["issue"]["fields"].ToString());
+
+                    bool isSubTask = Convert.ToBoolean(fields["issuetype"]["subtask"].ToString());
 
                     if (!isSubTask)
                     {
-                        JObject newIssue = JObject.Parse(JsonConvert.SerializeObject(IssueCreate(obj)));
-                        JArray affectedCountries = JsonConvert.DeserializeObject<JArray>(obj["issue"]["fields"]["customfield_10400"].ToString());
-
-                        foreach (var item in affectedCountries)
+                        if (fields.ContainsKey("customfield_10400"))
                         {
-                            string projectKey = "";
-                            string origem = "";
+                            JArray affectedCountries = JsonConvert.DeserializeObject<JArray>(fields["customfield_10400"].ToString());
 
-                            switch (item["value"].ToString().Trim().ToUpper())
+                            foreach (var item in affectedCountries)
                             {
-                                case "BRAZIL":
-                                    projectKey = GroupTypes.BRASIL;
-                                    origem = "Brasil";
-                                    break;
-                                case "BRASIL":
-                                    projectKey = GroupTypes.BRASIL;
-                                    origem = "Brasil";
-                                    break;
-                                case "CHILE":
-                                    projectKey = GroupTypes.CHILE;
-                                    origem = "Chile";
-                                    break;
-                                case "MÉXICO":
-                                    projectKey = GroupTypes.MÉXICO;
-                                    origem = "México";
-                                    break;
-                                case "MEXICO":
-                                    projectKey = GroupTypes.MÉXICO;
-                                    origem = "México";
-                                    break;
+                                string projectKey = "";
+                                string origem = "";
+
+                                switch (item["value"].ToString().Trim().ToUpper())
+                                {
+                                    case "BRAZIL":
+                                        projectKey = GroupTypes.BRASIL;
+                                        origem = "Brasil";
+                                        break;
+                                    case "BRASIL":
+                                        projectKey = GroupTypes.BRASIL;
+                                        origem = "Brasil";
+                                        break;
+                                    case "CHILE":
+                                        projectKey = GroupTypes.CHILE;
+                                        origem = "Chile";
+                                        break;
+                                    case "MÉXICO":
+                                        projectKey = GroupTypes.MÉXICO;
+                                        origem = "México";
+                                        break;
+                                    case "MEXICO":
+                                        projectKey = GroupTypes.MÉXICO;
+                                        origem = "México";
+                                        break;
+                                }
+
+                                _r = IssueCreate(obj, projectKey, origem);
                             }
-
-                            object project = new
-                            {
-                                key = projectKey
-                            };
-
-                            newIssue["fields"]["project"] = JObject.Parse(JsonConvert.SerializeObject(project));
-                            newIssue["fields"]["customfield_10705"] = origem;
-
-                            stf.Execute(new RestRequest("rest/api/2/issue", Method.POST).AddBody(newIssue));
                         }
                     }
                 }
             }
             catch (Exception e)
             {
-                var array = new JArray();
+                Logger.Now.LogEvent("NewIssue", "TICKET", "Exceção gerada", e.Message);
+            }
 
-                using (StreamReader read = new StreamReader(Path.Combine($@"{HttpRuntime.AppDomainAppPath}\Files\", "logError.json")))
+            return _r;
+        }
+
+        public bool IssueCreate(JObject obj, string projectKey, string origem)
+        {
+            Logger.Now.LogEvent("IssueCreate", "TICKET", "Entrou no método");
+            bool _r = false;
+            try
+            {
+                JObject fields = JsonConvert.DeserializeObject<JObject>(obj["issue"]["fields"].ToString());
+
+                string issueType = fields["issuetype"]["name"]
+                    .ToString()
+                    .Trim()
+                    .Replace(" ", "")
+                    .Replace("-", "TRAÇO")
+                    .Replace("&", "ECOMERCIAL")
+                    .ToUpper();
+
+                Int32 issueTypeId = (Int32)Enum.Parse(typeof(ExpandIssues), issueType);
+                String description = fields.ContainsKey("description") ? fields["description"].ToString() : "";
+
+                IRestResponse response = client.Stefanini.CreateIssue(projectKey, fields["summary"].ToString(),
+                                                                      issueTypeId, fields["priority"]["id"].ToString(),
+                                                                      description, obj["issue"]["key"].ToString(),
+                                                                      fields["reporter"]["displayName"].ToString(),
+                                                                      origem);
+                _r = response.IsSuccessful;
+   
+                if (response.IsSuccessful)
                 {
-                    array = JArray.Parse(read.ReadToEnd());
-                    array.Add(JObject.Parse(JsonConvert.SerializeObject(e)));
+                    
+                    Logger.Now.LogEvent("IssueCreate", "TICKET", "Finalizou", "SUCESSO", response.Content);
+                    JObject issue = JsonConvert.DeserializeObject<JObject>(response.Content.ToString());
+                    JArray getAttachment = JsonConvert.DeserializeObject<JArray>(obj["issue"]["fields"]["attachment"].ToString());
+
+                    if (getAttachment.Count != 0)
+                    {
+                        foreach (var file in getAttachment)
+                        {
+                            string url = $"/secure/attachment/{file["id"].ToString()}/{file["filename"].ToString()}";
+                            string nome = file["filename"].ToString();
+
+                            var r = client.Ticket.Buscar(url);
+
+                            IRestResponse rr = client.Stefanini.CreateAttachment(issue["Key"].ToString(), r.RawBytes, nome, r.ContentType);
+                            Logger.Now.LogEvent("IssueCreate", "TICKET", "Finalizou", rr.IsSuccessful ? "SUCESSO" : $"FALHA: {rr.Content}", obj.ToString());
+                        }
+                    }
                 }
-
-                using (StreamWriter write = File.CreateText(Path.Combine($@"{HttpRuntime.AppDomainAppPath}\Files\", "logError.json")))
+                Logger.Now.LogEvent("IssueCreate", "TICKET", "Finalizou", $"FALHA: {response.Content}");
+            }
+            catch (Exception e)
+            {
+                Logger.Now.LogEvent("IssueCreate", "TICKET", "Exceção gerada", e.Message);
+            }
+            return _r;
+        }
+    
+        public bool IssueUpdated(JObject obj)
+        {
+            Logger.Now.LogEvent("IssueUpdated", "TICKET", "Entrou no método");
+            bool _r = false;
+            string user = obj["user"]["name"].ToString();
+            if (user != "appjirastefanini")
+            {
+                JArray changLogs = JsonConvert.DeserializeObject<JArray>(obj["changelog"]["items"].ToString());
+                foreach (var log in changLogs)
                 {
-                    write.WriteLine(JsonConvert.SerializeObject(array, Formatting.Indented));
+                    switch (log["field"].ToString())
+                    {
+                        case "Attachment":  _r =UpdateAttachments(obj); break;
+                        //case "assignee":  _r = UpdateAssignee(obj); break;
+                        case "status":      _r = UpdateStatus(obj); break;
+                        case "description": _r = UpdateDescription(obj); break;
+                    }
                 }
             }
+
+            return _r;
         }
 
-        public object IssueCreate(JObject obj)
+        private bool UpdateDescription(JObject obj)
         {
-            JObject fields = JsonConvert.DeserializeObject<JObject>(obj["issue"]["fields"].ToString());
-            string issueType = fields["issuetype"]["name"]
-                .ToString()
-                .Trim()
-                .Replace(" ", "")
-                .Replace("-", "TRAÇO")
-                .Replace("&", "ECOMERCIAL")
-                .ToUpper();
-
-            object newIssue = new
+            string key = GetStfKey(obj);
+            bool _r = false;
+            JArray changLogs = JsonConvert.DeserializeObject<JArray>(obj["changelog"]["items"].ToString());
+            foreach (var log in changLogs)
             {
-                fields = new
+                if (log["field"].ToString() == "description")
                 {
-                    project = new
-                    {
-
-                    },
-                    summary = fields["summary"].ToString(),
-                    issuetype = new
-                    {
-                        id = (Int32)Enum.Parse(typeof(ExpandIssues), issueType),
-                    },
-                    assignee = new
-                    {
-                        name = fields["customfield_10219"]["name"].ToString() ?? null
-                    },
-                    reporter = new
-                    {
-                        name = fields["customfield_10902"][0]["name"].ToString() ?? null
-                    },
-                    priority = new
-                    {
-                        id = fields["priority"]["id"].ToString()
-                    },
-                    environment = fields["environment"].ToString() ?? "Environment",
-                    description = fields["description"].ToString() ?? "Description",
-                    customfield_10707 = obj["issue"]["key"].ToString(),
-                    customfield_10705 = "",
+                    IRestResponse r = client.Stefanini.UpdateDescription(key, log["toString"].ToString());
+                    _r = r.IsSuccessful;
                 }
-            };
-
-            return newIssue;
-        }
-
-        public void IssueUpdated(JObject obj)
-        {           
-                switch (obj["changelog"]["items"][0]["field"].ToString())
-                {
-                    case "Attachment": UpdateAttachments(obj); break;
-                    case "assignee": UpdateAssignee(obj); break;
-                    default: break;
-                }            
+            }
+            return _r;
         }
 
         private void UpdateAssignee(JObject obj)
         {
-            string log = "issue_updated_assignee";
+            Logger.Now.LogEvent("UpdateAssignee", "TICKET", "Entrou no método");
             try
             {
                 string nome = obj["changelog"]["items"][0]["to"].ToString();
@@ -224,37 +241,37 @@ namespace JiraMensageria.Controller
                     issueKey = obj["issue"]["key"].ToString();
                 }
 
-                IRestResponse r = SearchIssue(issueKey);
+                IRestResponse r = client.Stefanini.BuscarPorCustomField(issueKey, "10707");
 
                 if (r.IsSuccessful)
                 {
+                    Logger.Now.LogEvent("UpdateAssignee", "TICKET", "Finalizou", "SUCESSO", obj.ToString());
                     JObject stfIssue = JObject.Parse(r.Content.ToString());
 
-                    stf.Execute(new RestRequest($"/rest/api/2/issue/{stfIssue["issues"][0]["id"].ToString()}/assignee", Method.PUT)
-                    {
-                        RequestFormat = DataFormat.Json
-                    }.AddBody(new { name = nome }));
+                    IRestResponse rr = client.Stefanini.UpdateAssignee(stfIssue["issues"][0]["id"].ToString(), nome);
+
+                    Logger.Now.LogEvent("UpdateAssignee", "TICKET", "Finalizou", rr.IsSuccessful ? "SUCESSO" : $"FALHA: {rr.Content}", obj.ToString());
                 }
-                else
-                {
-                    Log($"{log}-SearchError", r.Content, true);
-                }
+                Logger.Now.LogEvent("UpdateAttachments", "TICKET", "Finalizou", $"FALHA: {r.Content}");
+
             }
-            catch (Exception ex)
+            catch (Exception e)
             {
-                Log($"{log}-exception", $"{ex.Message}\n{ex.InnerException}\n{ex.StackTrace}", true);
+                Logger.Now.LogEvent("UpdateAssignee", "TICKET", "Exceção gerada", e.Message);
             }
         }
 
-        private void UpdateAttachments(JObject obj)
+        private bool UpdateAttachments(JObject obj)
         {
-            string log = "issue_updated_attachments";
+            Logger.Now.LogEvent("UpdateAttachments", "TICKET", "Entrou no método");
+            bool _r = false;
             try
             {
-                string url = "https://jirahomol.lanet.accorservices.com/secure/attachment";
-                string id = obj["changelog"]["items"][0]["to"].ToString();
+                string url = $"/secure/attachment/{obj["changelog"]["items"][0]["to"].ToString()}/{obj["changelog"]["items"][0]["toString"].ToString()}";
                 string nome = obj["changelog"]["items"][0]["toString"].ToString();
+
                 string issueKey;
+
                 if (bool.Parse(obj["issue"]["fields"]["issuetype"]["subtask"].ToString()))
                 {
                     issueKey = obj["issue"]["fields"]["parent"]["key"].ToString();
@@ -264,75 +281,143 @@ namespace JiraMensageria.Controller
                     issueKey = obj["issue"]["key"].ToString();
                 }
 
-                IRestResponse r = SearchIssue(issueKey);
+                IRestResponse r = client.Stefanini.BuscarPorCustomField(issueKey, "10707");
+                
+
+                JObject stfIssue = JObject.Parse(r.Content.ToString());
+
+                string id = stfIssue["issues"][0]["id"].ToString();
 
                 if (r.IsSuccessful)
                 {
-                    JObject stfIssue = JObject.Parse(r.Content.ToString());
+                    Logger.Now.LogEvent("UpdateAttachments", "TICKET", "Finalizou", "SUCESSO");
+                    var req = client.Ticket.Buscar(url);
 
-                    IRestResponse rr = stf.Execute(new RestRequest($"/rest/api/2/issue/{stfIssue["issues"][0]["id"]}/attachments", Method.POST)
+                    IRestResponse rr = client.Stefanini.CreateAttachment(id, req.RawBytes, nome, req.ContentType);
+                    _r = rr.IsSuccessful;
+
+                    Logger.Now.LogEvent("UpdateAttachments", "TICKET", "Finalizou", rr.IsSuccessful ? "SUCESSO" : $"FALHA: {rr.Content}", obj.ToString());
+               
+                }
+                Logger.Now.LogEvent("UpdateAttachments", "TICKET", "Finalizou", $"FALHA: {r.Content}");
+            }
+            catch (Exception e)
+            {
+                Logger.Now.LogEvent("UpdateAttachments", "TICKET", "Exceção gerada", e.Message);
+            }
+
+            return _r;
+        }
+
+        private bool UpdateStatus(JObject obj)
+        {
+            Logger.Now.LogEvent("UpdateStatus", "TICKET", "Entrou no método");
+            bool _r = false;
+            Dictionary<string, string> statuses = new Dictionary<string, string>()
+            {
+                {"10301", "10404"},
+                {"10822", "10600"},
+                {"10820", "10501"},
+                {"10823", "10504"},
+                {"10302", "10504"},
+                {"10828", "10506"},
+                {"10827", "10521"},
+                {"10818", "10505"},
+                {"10821", "10510"},
+                {"10824", "10511"},
+                {"10825", "10510"},
+                {"10819", "10514"},
+                {"10817", "10207"}
+            };
+            try
+            {
+                bool isSubTask = Convert.ToBoolean(obj["issue"]["fields"]["issuetype"]["subtask"].ToString());
+
+                if (!isSubTask)
+                {
+                    string key = GetStfKey(obj);
+
+                    string statusId = statuses[obj["issue"]["fields"]["status"]["id"].ToString()];
+
+                    IRestResponse irr = client.Stefanini.BuscarTransitions(key);
+                    _r = irr.IsSuccessful;
+                    Logger.Now.LogEvent("UpdateStatus", "TICKET", "BuscarTransitions", irr.IsSuccessful ? "SUCESSO" : $"FALHA: {irr.Content}");
+
+                    JObject t = JObject.Parse(irr.Content.ToString());
+                    JArray transitions = JsonConvert.DeserializeObject<JArray>(t["transitions"].ToString());
+
+                    foreach (var item in transitions)
                     {
-                        RequestFormat = DataFormat.Json
-                    }.AddFile(nome.Substring(0, nome.IndexOf('.')), GetFile($"{url}/{id}/{nome}"), nome));
-                }
-                else
-                {
-                    Log($"{log}-SearchError", r.Content, true);
-                }
-            }
-            catch (Exception ex)
-            {
-                Log($"{log}-exception", $"{ex.Message}\n{ex.InnerException}\n{ex.StackTrace}", true);
-            }
-        }
-        #region Geral
-        public IRestResponse SearchIssue(string issueKey)
-        {
-            return stf.Execute(new RestRequest($@"/rest/api/2/search?jql='cf[10707]'~'{issueKey}'", Method.GET)
-            {
-                RequestFormat = DataFormat.Json
-            });
-        }
+                        if (item["to"]["id"].ToString().Equals(statusId))
+                        {
+                            int id = int.Parse(item["id"].ToString());
+                            IRestResponse r = client.Stefanini.UpdateStatus(key, id);
+                            
+                            Logger.Now.LogEvent("UpdateStatus", "TICKET", "UpdateStatus", r.IsSuccessful ? "SUCESSO" : $"FALHA: {r.Content}");
+                            break;
+                        }
+                    }
 
-        public byte[] GetFile(string path)
-        {
-            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(path);
-
-            String encoded = Convert.ToBase64String(Encoding.GetEncoding("ISO-8859-1").GetBytes("appjirastefanini:J!r@edenred"));
-            request.Headers.Add("Authorization", "Basic " + encoded);
-
-            HttpWebResponse response = (HttpWebResponse)request.GetResponse();
-            Stream resStream = response.GetResponseStream();
-
-            byte[] buffer = new byte[16 * 1024];
-            using (MemoryStream ms = new MemoryStream())
-            {
-                int read;
-                while ((read = resStream.Read(buffer, 0, buffer.Length)) > 0)
-                {
-                    ms.Write(buffer, 0, read);
                 }
             }
+            catch (Exception e)
+            {
+                Logger.Now.LogEvent("UpdateStatus", "TICKET", "Exceção gerada", e.Message);
+            }
 
-            return buffer;
+            return _r;
         }
 
-        private void Log(string filename, string data, bool isError)
+        public string GetStfKey(JObject obj)
         {
-            string mydocpath = $"{HttpRuntime.AppDomainAppPath}/Files/{(isError ? "errors" : "actions")}/{filename}";
+            Logger.Now.LogEvent("UpdateStatus", "TICKET", "Entrou no método");
 
-            if (!Directory.Exists(mydocpath))
+            string issueKey;
+
+            if (bool.Parse(obj["issue"]["fields"]["issuetype"]["subtask"].ToString()))
             {
-                Directory.CreateDirectory(mydocpath);
+                issueKey = obj["issue"]["fields"]["parent"]["key"].ToString();
+            }
+            else
+            {
+                issueKey = obj["issue"]["key"].ToString();
             }
 
-            filename = $"{DateTime.Now.ToString("yyyy-MM-dd-hh-mm-ss")}.log";
+            IRestResponse r = client.Stefanini.BuscarPorCustomField(issueKey, "10707");
+            Logger.Now.LogEvent("UpdateStatus", "TICKET", "UpdateStatus", r.IsSuccessful ? "SUCESSO" : $"FALHA: {r.Content}");
+            JObject stfIssue = JObject.Parse(r.Content.ToString());
 
-            using (StreamWriter outputFile = new StreamWriter(Path.Combine(mydocpath, filename), true))
-            {
-                outputFile.WriteLine(data);
-            }
+            string key = stfIssue["issues"][0]["key"].ToString();
+
+            return key;
         }
+
+        #endregion
+
+        #region Classe não utilizada lógica possívelmente útil (guardando)
+        //[HttpPost]
+        //[Route("ticket/project/created")]
+        //public object ProjectCreatedAsync(JObject obj)
+        //{
+        //    var objForPost = new
+        //    {
+        //        key = obj["project"]["key"].ToString(),
+        //        name = obj["project"]["name"].ToString(),
+        //        projectTypeKey = "business",
+        //        projectTemplateKey = "com.atlassian.jira-core-project-templates:jira-core-simplified-project-management",
+        //        description = "",
+        //        assigneeType = "UNASSIGNED",
+        //        lead = "admin"
+        //    };
+
+        //    var request = new RestRequest("rest/api/2/project", Method.POST)
+        //    {
+        //        RequestFormat = DataFormat.Json,
+        //    };
+        //    request.AddBody(objForPost);
+        //    var response = JsonConvert.DeserializeObject(stf.Execute(request).Content);
+        //    return response;
+        //}
         #endregion
     }
 }

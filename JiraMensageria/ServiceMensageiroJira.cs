@@ -1,4 +1,5 @@
 ﻿using JiraMensageria.Controller;
+using JiraMensageria.Helpers;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System;
@@ -21,15 +22,12 @@ namespace JiraMensageria
 
         protected override void OnStart(string[] args)
         {
-         
             thread = new Thread(ExecutaFilaJira)
             {
                 Name = "Execute Thread of Messaging Service",
                 IsBackground = true
             };
             thread.Start();
-            
-
         }
 
         protected override void OnStop()
@@ -47,20 +45,18 @@ namespace JiraMensageria
             StefaniniController stf = new StefaniniController();
             TicketController tkt = new TicketController();
 
-            try
+            MessageQueue msmq = new MessageQueue(ConfigurationManager.AppSettings["caminhoFila"].ToString());
+            msmq.MessageReadPropertyFilter.Priority = true;
+            msmq.Formatter = new XmlMessageFormatter(new Type[] { typeof(string) });                       
+
+            while (msmq.CanRead)
             {
-                MessageQueue msmq = new MessageQueue(ConfigurationManager.AppSettings["caminhoFila"].ToString());
-                msmq.MessageReadPropertyFilter.Priority = true;
-                msmq.Formatter = new XmlMessageFormatter(new Type[] { typeof(string) });
-
-                //int count = msmq.GetAllMessages().Length;
-
-                while (msmq.CanRead)
+                try
                 {
-                    Message item = msmq.Receive();
+                    Message item = msmq.Peek();
                     result = item.Body.ToString();
 
-                    string[] route = item.Label.Split('/');
+                    string[] route = item.Label.Split('/'); 
 
                     if (route.Length > 0)
                     {
@@ -73,45 +69,35 @@ namespace JiraMensageria
                     //TICKET
                     if (jira == "ticket")
                     {
-                        if (evento == "commentcreated")
+                        switch (evento)
                         {
-                            tkt.CommentCreated(jObj);
-                        }
-                        else if (evento == "newissue")
-                        {
-                            tkt.NewIssue(jObj);
-                        }
-                        else if (evento == "issueupdated")
-                        {
-                            tkt.IssueUpdated(jObj);
-                        }
-                        else if (evento == "issuecreated")
-                        {
-                            tkt.IssueCreate(jObj);
-                        }
+                            //case "commentcreated"   : tkt.CommentCreated(jObj); break;
+                            case "newissue"         : tkt.NewIssue(jObj); break;
+                            case "issueupdated"     : tkt.IssueUpdated(jObj); break;
+                            case "issuecreated"     : tkt.IssueCreate(jObj, "projetctKey", "ticket"); break;
+                            default: break;
+                        }                      
                     }
                     //STEFANINI
                     else if (jira == "stefanini")
                     {
-                        if (evento == "worklogcreated")
+                        switch (evento)
                         {
-                            stf.WorklogCreated(jObj);
-                        }
-                        else if (evento == "issueupdated")
-                        {
-                            stf.IssueUpdated(jObj);
-                        }
-                        else if (evento == "updatestatus")
-                        {
-                            stf.UpdateStatus(jObj);
-                        }
+                            case "worklogcreated"   : stf.WorklogCreated(jObj); break;
+                           // case "issueupdated"     : stf.IssueUpdated(jObj); break;
+                            case "updatestatus"     : stf.UpdateStatus(jObj); break;                           
+                            default: break;
+                        }                      
                     }
+
+                    msmq.ReceiveById(item.Id);
+                }
+                catch (Exception ex)
+                {
+                    Logger.Now.LogEvent(evento, jira, ex.Message);
                 }
             }
-            catch (Exception ex)
-            {
-                LogController.LogMensageria(ex.Message, evento, jira);
-            }
+           
 
 
         }

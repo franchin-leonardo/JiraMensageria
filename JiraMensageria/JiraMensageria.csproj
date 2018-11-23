@@ -36,7 +36,10 @@
     <StartupObject>JiraMensageria.Program</StartupObject>
   </PropertyGroup>
   <ItemGroup>
-    <Reference Include="Newtonsoft.Json, Version=6.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed, processorArchitecture=MSIL" />
+    <Reference Include="Newtonsoft.Json, Version=6.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed, processorArchitecture=MSIL">
+      <SpecificVersion>False</SpecificVersion>
+      <HintPath>..\packages\Newtonsoft.Json.11.0.2\lib\net45\Newtonsoft.Json.dll</HintPath>
+    </Reference>
     <Reference Include="RestSharp, Version=106.5.4.0, Culture=neutral, PublicKeyToken=598062e77f915f75, processorArchitecture=MSIL">
       <HintPath>..\packages\RestSharp.106.5.4\lib\net452\RestSharp.dll</HintPath>
     </Reference>
@@ -57,10 +60,13 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="Controllers\LogController.cs" />
     <Compile Include="Controllers\StefaniniController.cs" />
     <Compile Include="Controllers\TicketController.cs" />
-    <Compile Include="Models\Expand.cs" />
+    <Compile Include="Helpers\JiraClient.cs" />
+    <Compile Include="Helpers\Logger.cs" />
+    <Compile Include="Models\ExpandIssues.cs" />
+    <Compile Include="Models\ExpandProjects.cs" />
+    <Compile Include="Models\ExpandStatus.cs" />
     <Compile Include="Models\ExpandStoryPoints.cs" />
     <Compile Include="ProjectInstaller.cs">
       <SubType>Component</SubType>
